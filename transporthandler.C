@@ -34,7 +34,7 @@ const uint8_t SET_IN_PROGRESS_RESERVED = 3; //Reserved
 
 // Status of Set-In-Progress Parameter (# 0)
 uint8_t lan_set_in_progress = SET_COMPLETE;
-
+static uint8_t ip_source = 0x02;
 
 
 void register_netfn_transport_functions() __attribute__((constructor));
@@ -43,6 +43,7 @@ void register_netfn_transport_functions() __attribute__((constructor));
 // based on Set-In-Progress State
 ipmi_ret_t getNetworkData(uint8_t lan_param, uint8_t * data)
 {
+    printf("printf getNetworkData\n");
     sd_bus *bus = ipmid_get_sd_bus_connection();
     sd_bus_message *reply = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -52,6 +53,7 @@ ipmi_ret_t getNetworkData(uint8_t lan_param, uint8_t * data)
     unsigned long mask = 0xFFFFFFFF;
     char* gateway = NULL;
     int r = 0;
+    fprintf(stderr, "fprintf getNetworkData: %s\n", strerror(-r));
     ipmi_ret_t rc = IPMI_CC_OK;
 
     r = sd_bus_call_method(bus, app, obj, ifc, "GetAddress4", &error,
@@ -150,6 +152,7 @@ ipmi_ret_t ipmi_transport_set_lan(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
     sd_bus_error error = SD_BUS_ERROR_NULL;
     int r = 0;
 
+    fprintf(stderr, "ipmi_transport_set IPMI SET_LAN: %s\n", strerror(-r));
     printf("IPMI SET_LAN\n");
 
     set_lan_t *reqptr = (set_lan_t*) request;
@@ -193,6 +196,32 @@ ipmi_ret_t ipmi_transport_set_lan(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
         snprintf(new_gateway, INET_ADDRSTRLEN, "%d.%d.%d.%d",
             reqptr->data[0], reqptr->data[1], reqptr->data[2], reqptr->data[3]);
     }
+    else if (reqptr->parameter == LAN_PARM_SOURCE)
+    {
+       if(reqptr->data[0] != 2)
+       {
+               fprintf(stderr, "Unsupported data[0]=0x%x of parameter 4\n", reqptr->data[0]);
+               rc = IPMI_CC_PARM_NOT_SUPPORTED;
+       }
+       else
+       {
+               r = sd_bus_call_method(bus, app, obj, ifc, "EnableDHCP", &error,
+                                       &reply, "s", nwinterface);
+
+               if(r < 0)
+               {
+                       fprintf(stderr, "Failed to call the method: %s\n", strerror(-r));
+                       rc = IPMI_CC_UNSPECIFIED_ERROR;
+               }
+               else
+               {
+                       ip_source = reqptr->data[0];
+                       rc = IPMI_CC_OK;
+                       fprintf(stderr, "Set LAN configuration parameter 0x%x success\n", reqptr->parameter);
+               }
+       }
+    }
+
     else if (reqptr->parameter == LAN_PARM_INPROGRESS)
     {
         if(reqptr->data[0] == SET_COMPLETE) // Set Complete
@@ -223,6 +252,7 @@ ipmi_ret_t ipmi_transport_set_lan(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
                     fprintf(stderr, "Failed to set network data %s:%s:%s %s\n", new_ipaddr, new_netmask, new_gateway, error.message);
                     rc = IPMI_CC_UNSPECIFIED_ERROR;
                 }
+		ip_source = 1;
                 memset(new_ipaddr, 0, INET_ADDRSTRLEN);
                 memset(new_netmask, 0, INET_ADDRSTRLEN);
                 memset(new_gateway, 0, INET_ADDRSTRLEN);
@@ -314,6 +344,13 @@ ipmi_ret_t ipmi_transport_get_lan(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
         {
             rc = IPMI_CC_UNSPECIFIED_ERROR;
         }
+    }
+    else if (reqptr->parameter == LAN_PARM_SOURCE)
+    {
+        fprintf(stderr, "Get LAN configuration parameter 0x%x\n",reqptr->parameter);
+        uint8_t buf[] = {current_revision,ip_source};
+       *data_len = sizeof(buf);
+        memcpy(response, &buf, *data_len);
     }
     else if (reqptr->parameter == LAN_PARM_MAC)
     {

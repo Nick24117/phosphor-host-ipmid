@@ -20,6 +20,7 @@ static const int LAN_PARM_INPROGRESS  = 0;
 static const int LAN_PARM_AUTHSUPPORT = 1;
 static const int LAN_PARM_AUTHENABLES = 2;
 static const int LAN_PARM_IP          = 3;
+static const int LAN_PARM_SOURCE      = 4;
 static const int LAN_PARM_MAC         = 5;
 static const int LAN_PARM_SUBNET      = 6;
 static const int LAN_PARM_GATEWAY     = 12;

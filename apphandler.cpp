@@ -191,7 +191,7 @@ int convert_version(const char * p, rev_t *rev)
         if (location != std::string::npos)
         {
             rev->major = static_cast<char>(
-                    std::stoi(s.substr(0, location), 0, 16));
+                    std::stoi(s.substr(0, location), 0, 10));
             token = s.substr(location+1);
         }
 
@@ -201,7 +201,7 @@ int convert_version(const char * p, rev_t *rev)
             if (location != std::string::npos)
             {
                 rev->minor = static_cast<char>(
-                        std::stoi(token.substr(0, location), 0, 16));
+                        std::stoi(token.substr(0, location), 0, 10));
                 token = token.substr(location+1);
             }
         }
@@ -211,7 +211,7 @@ int convert_version(const char * p, rev_t *rev)
         location = token.find_first_of(".-");
         if (!token.empty())
         {
-            commits = std::stoi(token.substr(0, location), 0, 16);
+            commits = std::stoi(token.substr(0, location), 0, 10);
             rev->d[0] = (commits>>8) | (commits<<8);
 
             // commit number we skip

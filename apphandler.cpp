@@ -199,6 +199,7 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
 
     // Pack the actual response
     memcpy(response, &dev_id, *data_len);
+    printf("[DEBUGMSG]========================IPMI get device ID======================== \n");
 finish:
     free(busname);
     free(ver);

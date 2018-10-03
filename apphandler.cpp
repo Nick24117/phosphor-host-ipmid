@@ -123,6 +123,7 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
                              ipmi_request_t request, ipmi_response_t response,
                              ipmi_data_len_t data_len, ipmi_context_t context)
 {
+	printf("[DEBUGMSG] IPMI GET DEVICE ID ============================== \n");
     ipmi_ret_t rc = IPMI_CC_OK;
     const char  *objname = "/org/openbmc/inventory/system/chassis/motherboard/bmc";
     const char  *iface   = "org.openbmc.InventoryItem";

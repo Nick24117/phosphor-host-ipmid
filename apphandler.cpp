@@ -147,12 +147,14 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
 
     // Firmware revision is already implemented, so get it from appropriate position.
     r = mapper_get_service(bus, objname, &busname);
+	printf ("[DEBUGMSG] r = %d  (mapper_get_service)\n", r)
     if (r < 0) {
         fprintf(stderr, "Failed to get %s bus name: %s\n",
                 objname, strerror(-r));
         goto finish;
     }
     r = sd_bus_get_property_string(bus,busname,objname,iface,"version", NULL, &ver);
+	printf ("[DEBUGMSG] r = %d  (sd_bus_get_property_string)\n", r)
     if ( r < 0 ) {
         fprintf(stderr, "Failed to obtain version property: %s\n", strerror(-r));
     } else {
@@ -201,7 +203,7 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
     // Pack the actual response
     memcpy(response, &dev_id, *data_len);
     printf("[DEBUGMSG] ============================== IPMI GET DEVICE ID end\n");
-	rc = IPMI_CC_UNSPECIFIED_ERROR;
+	rc = -1;
 finish:
     free(busname);
     free(ver);

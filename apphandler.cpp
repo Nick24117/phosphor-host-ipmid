@@ -200,7 +200,8 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
 
     // Pack the actual response
     memcpy(response, &dev_id, *data_len);
-    printf("[DEBUGMSG]========================IPMI get device ID======================== \n");
+    printf("[DEBUGMSG] ============================== IPMI GET DEVICE ID end\n");
+	rc = IPMI_CC_UNSPECIFIED_ERROR;
 finish:
     free(busname);
     free(ver);

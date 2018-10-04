@@ -3,16 +3,19 @@
 #include "app/watchdog.hpp"
 #include "host-ipmid/ipmid-api.h"
 #include "ipmid.hpp"
+#include "nlohmann/json.hpp"
 #include "types.hpp"
 #include "utils.hpp"
 
+#include <fstream>
 #include <stdio.h>
-#include <string.h>
 #include <stdint.h>
 #include <systemd/sd-bus.h>
 #include <mapper.h>
 #include <array>
 #include <vector>
+#include <string>
+#include <cstddef>
 #include <experimental/filesystem>
 
 #include <arpa/inet.h>
@@ -67,55 +70,88 @@ typedef struct
 } rev_t;
 
 
-/* Currently only supports the vx.x-x-[-x] format Will return -1 if not in  */
-/* the format this routine knows how to parse                               */
+/* Currently supports the vx.x-x-[-x] and v1.x.x-x-[-x] format. It will     */
+/* return -1 if not in those formats, this routine knows how to parse       */
 /* version = v0.6-19-gf363f61-dirty                                         */
 /*            ^ ^ ^^          ^                                             */
 /*            | |  |----------|-- additional details                        */
 /*            | |---------------- Minor                                     */
 /*            |------------------ Major                                     */
+/* and version = v1.99.10-113-g65edf7d-r3-0-g9e4f715                        */
+/*                ^ ^  ^^ ^                                                 */
+/*                | |  |--|---------- additional details                    */
+/*                | |---------------- Minor                                 */
+/*                |------------------ Major                                 */
 /* Additional details : If the option group exists it will force Auxiliary  */
 /* Firmware Revision Information 4th byte to 1 indicating the build was     */
 /* derived with additional edits                                            */
-int convert_version(const char *p, rev_t *rev)
+int convert_version(const char * p, rev_t *rev)
 {
     char *s, *token;
+	std::string s(p);
+    std::string token;
     uint16_t commits;
 
-    if (*p != 'v')
-        return -1;
-    p++;
-
-    s = strdup(p);
-    token = strtok(s,".-");
-
-    rev->major = (int8_t) atoi(token);
-
-    token = strtok(NULL, ".-");
-    rev->minor = (int8_t) atoi(token);
-
-    // Capture the number of commits on top of the minor tag.
-    // I'm using BE format like the ipmi spec asked for
-    token = strtok(NULL,".-");
-
-    if (token) {
-        commits = (int16_t) atoi(token);
-        rev->d[0] = (commits>>8) | (commits<<8);
-
-        // commit number we skip
-        token = strtok(NULL,".-");
-
-    } else {
-        rev->d[0] = 0;
+    auto location  = s.find_first_of('v');
+    if (location != std::string::npos)
+    {
+        s = s.substr(location+1);
     }
 
-    // Any value of the optional parameter forces it to 1
-    if (token)
-        token = strtok(NULL,".-");
+	if (!s.empty())
+    {
+        location = s.find_first_of(".");
+        if (location != std::string::npos)
+        {
+            rev->major = static_cast<char>(std::stoi(s.substr(0, location), 0, 16));
+            token = s.substr(location+1);
+        }
+        if (!token.empty())
+        {
+            location = token.find_first_of(".-");
+            if (location != std::string::npos)
+            {
+                rev->minor = static_cast<char>(std::stoi(token.substr(0, location), 0, 16));
+                token = token.substr(location+1);
+            }
+        }
 
-    rev->d[1] = (token != NULL) ? 1 : 0;
+        // Capture the number of commits on top of the minor tag.
+        // I'm using BE format like the ipmi spec asked for
+        location = token.find_first_of(".-");
+        if (!token.empty())
+        {
+            commits = std::stoi(token.substr(0, location), 0, 16);
+            rev->d[0] = (commits>>8) | (commits<<8);
+             // commit number we skip
+            location = token.find_first_of(".-");
+            if (location != std::string::npos)
+            {
+                token = token.substr(location+1);
+            }
+        }
+        else {
+            rev->d[0] = 0;
+        }
 
-    free(s);
+        if (location != std::string::npos)
+        {
+            token = token.substr(location+1);
+        }
+
+        // Any value of the optional parameter forces it to 1
+        location = token.find_first_of(".-");
+        if (location != std::string::npos)
+        {
+            token = token.substr(location+1);
+        }
+        commits = (!token.empty()) ? 1 : 0;
+
+        //We do this operation to get this displayed in least significant bytes
+        //of ipmitool device id command.
+        rev->d[1] = (commits>>8) | (commits<<8);
+    }
+
     return 0;
 }
 
@@ -131,7 +167,9 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
     char *busname = NULL;
     int r;
     rev_t rev = {0};
-    ipmi_device_id_t dev_id{};
+    static ipmi_device_id_t dev_id{};
+    static bool dev_id_initialized = false;
+    const char* filename = "/usr/share/ipmi-providers/dev_id.json";
 
     // Data length
     *data_len = sizeof(dev_id);
@@ -139,67 +177,72 @@ ipmi_ret_t ipmi_app_get_device_id(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
     // From IPMI spec, controller that have different application commands, or different
     // definitions of OEM fields, are expected to have different Device ID values.
     // Set to 0 now.
+    if (!dev_id_initialized)
+    {
+        // Firmware revision is already implemented,
+        // so get it from appropriate position.
+        r = mapper_get_service(bus, objname, &busname);
+        if (r < 0) {
+            fprintf(stderr, "Failed to get %s bus name: %s\n",
+                    objname, strerror(-r));
+            goto finish;
+        }
+        r = sd_bus_get_property_string(bus,busname,objname,iface,"version",
+                NULL, &ver);
+        if ( r < 0 ) {
+            fprintf(stderr, "Failed to obtain version property: %s\n",
+                    strerror(-r));
+        } else {
+            r = convert_version(ver, &rev);
+            if( r >= 0 ) {
+                // bit7 identifies if the device is available
+                // 0=normal operation
+                // 1=device firmware, SDR update,
+                // or self-initialization in progress.
+                // our SDR is normal working condition, so mask:
+                dev_id.fw[0] = 0x7F & rev.major;
+                 rev.minor = (rev.minor > 99 ? 99 : rev.minor);
+                dev_id.fw[1] = rev.minor % 10 + (rev.minor / 10) * 16;
+                memcpy(&dev_id.aux, rev.d, 4);
+            }
+        }
 
-    // Device Revision is set to 0 now.
-    // Bit7 identifies if device provide Device SDRs,  obmc don't have SDR,we use ipmi to
-    // simulate SDR, hence the value:
-    dev_id.revision = 0x80;
+        // IPMI Spec version 2.0
+        dev_id.ipmi_ver = 2;
 
-    // Firmware revision is already implemented, so get it from appropriate position.
-    r = mapper_get_service(bus, objname, &busname);
-	printf ("[DEBUGMSG] r = %d  (mapper_get_service)\n", r);
-    if (r < 0) {
-        fprintf(stderr, "Failed to get %s bus name: %s\n",
-                objname, strerror(-r));
-        goto finish;
-    }
-    r = sd_bus_get_property_string(bus,busname,objname,iface,"version", NULL, &ver);
-	printf ("[DEBUGMSG] r = %d  (sd_bus_get_property_string)\n", r);
-    if ( r < 0 ) {
-        fprintf(stderr, "Failed to obtain version property: %s\n", strerror(-r));
-    } 
-	else {
-        r = convert_version(ver, &rev);
-        if( r >= 0 ) {
-            // bit7 identifies if the device is available, 0=normal operation,
-            // 1=device firmware, SDR update or self-initialization in progress.
-            // our SDR is normal working condition, so mask:
-            dev_id.fw[0] = 0x7F & rev.major;
-
-            rev.minor = (rev.minor > 99 ? 99 : rev.minor);
-            dev_id.fw[1] = rev.minor % 10 + (rev.minor / 10) * 16;
-            memcpy(&dev_id.aux, rev.d, 4);
+        std::ifstream dev_id_file(filename);
+        if (dev_id_file.is_open())
+        {
+            auto data = nlohmann::json::parse(dev_id_file, nullptr, false);
+            if (!data.is_discarded())
+            {
+                dev_id.id = data.value("id", 0);
+                dev_id.revision = data.value("revision", 0);
+                dev_id.addn_dev_support = data.value("addn_dev_support", 0);
+                dev_id.manuf_id[2] = data.value("manuf_id", 0) >> 16;
+                dev_id.manuf_id[1] = data.value("manuf_id", 0) >> 8;
+                dev_id.manuf_id[0] = data.value("manuf_id", 0);
+                dev_id.prod_id[1] = data.value("prod_id", 0) >> 8;
+                dev_id.prod_id[0] = data.value("prod_id", 0);
+                dev_id.aux[3] = data.value("aux", 0) >> 24;
+                dev_id.aux[2] = data.value("aux", 0) >> 16;
+                dev_id.aux[1] = data.value("aux", 0) >> 8;
+                dev_id.aux[0] = data.value("aux", 0);
+                 //Don't read the file every time if successful
+                dev_id_initialized = true;
+            }
+            else
+            {
+                log<level::ERR>("Device ID JSON parser failure");
+                rc = IPMI_CC_UNSPECIFIED_ERROR;
+            }
+        }
+        else
+        {
+            log<level::ERR>("Device ID file not found");
+            rc = IPMI_CC_UNSPECIFIED_ERROR;
         }
     }
-
-    // IPMI Spec version 2.0
-    dev_id.ipmi_ver = 2;
-
-    // Additional device Support.
-    // List the 'logical device' commands and functions that the controller supports
-    // that are in addition to the mandatory IPM and Application commands.
-    // [7] Chassis Device (device functions as chassis device per ICMB spec.)
-    // [6] Bridge (device responds to Bridge NetFn commands)
-    // [5] IPMB Event Generator
-    // [4] IPMB Event Receiver
-    // [3] FRU Inventory Device
-    // [2] SEL Device
-    // [1] SDR Repository Device
-    // [0] Sensor Device
-    // We support FRU/SEL/Sensor now:
-    dev_id.addn_dev_support = 0x8D;
-
-    // This value is the IANA number assigned to "IBM Platform Firmware
-    // Division", which is also used by our service processor.  We may want
-    // a different number or at least a different version?
-    dev_id.manuf_id[0] = 0x41;
-    dev_id.manuf_id[1] = 0xA7;
-    dev_id.manuf_id[2] = 0x00;
-
-    // Witherspoon's product ID is hardcoded to 4F42(ASCII 'OB').
-    // TODO: openbmc/openbmc#495
-    dev_id.prod_id[0] = 0x4F;
-    dev_id.prod_id[1] = 0x42;
 
     // Pack the actual response
     memcpy(response, &dev_id, *data_len);

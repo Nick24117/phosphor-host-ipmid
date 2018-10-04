@@ -87,7 +87,6 @@ typedef struct
 /* derived with additional edits                                            */
 int convert_version(const char * p, rev_t *rev)
 {
-    char *s, *token;
 	std::string s(p);
     std::string token;
     uint16_t commits;
@@ -123,6 +122,7 @@ int convert_version(const char * p, rev_t *rev)
         {
             commits = std::stoi(token.substr(0, location), 0, 16);
             rev->d[0] = (commits>>8) | (commits<<8);
+			
              // commit number we skip
             location = token.find_first_of(".-");
             if (location != std::string::npos)
